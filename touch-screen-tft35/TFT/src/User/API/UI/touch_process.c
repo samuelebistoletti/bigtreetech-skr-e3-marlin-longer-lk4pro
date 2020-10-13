@@ -158,9 +158,6 @@ void loopTouchScreen(void) // Handle in interrupt
     if(touch >= 20) // 20ms
     {
       touchScreenIsPress = true;
-      #ifdef LCD_LED_PWM_CHANNEL
-        LCD_Dim_Idle_Timer_Reset();
-      #endif
     }
     else
     {
@@ -171,9 +168,6 @@ void loopTouchScreen(void) // Handle in interrupt
   {
     touchScreenIsPress = false;
     touch = 0;
-    #ifdef LCD_LED_PWM_CHANNEL
-      LCD_Dim_Idle_Timer();
-    #endif
   }
 }
 
@@ -183,7 +177,7 @@ u8 isPress(void)
 }
 
 
-void (*TSC_ReDrawIcon)(u8 positon, u8 is_press) = NULL;
+void (*TSC_ReDrawIcon)(u8 position, u8 is_press) = NULL;
 
 u16 KEY_GetValue(u8 total_rect,const GUI_RECT* menuRect)
 {

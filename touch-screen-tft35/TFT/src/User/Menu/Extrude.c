@@ -1,21 +1,6 @@
 #include "Extrude.h"
 #include "includes.h"
 
-// 1 title, ITEM_PER_PAGE items (icon + label)
-MENUITEMS extrudeItems = {
-// title
-LABEL_EXTRUDE,
-// icon                       label
- {{ICON_UNLOAD,               LABEL_UNLOAD},
-  {ICON_BACKGROUND,           LABEL_BACKGROUND},
-  {ICON_BACKGROUND,           LABEL_BACKGROUND},
-  {ICON_LOAD,                 LABEL_LOAD},
-  {ICON_NOZZLE,               LABEL_NOZZLE},
-  {ICON_E_5_MM,               LABEL_5_MM},
-  {ICON_NORMAL_SPEED,         LABEL_NORMAL_SPEED},
-  {ICON_BACK,                 LABEL_BACK},}
-};
-
 static u8  item_extruder_i = 0;
 
 #define ITEM_SPEED_NUM 3
@@ -29,16 +14,18 @@ const ITEM itemSpeed[ITEM_SPEED_NUM] = {
 
 static u8  item_speed_i = 1;
 
-#define ITEM_LEN_NUM 3
+#define ITEM_LEN_NUM 5
 
 const ITEM itemLen[ITEM_LEN_NUM] = {
 // icon                       label
   {ICON_E_1_MM,               LABEL_1_MM},
   {ICON_E_5_MM,               LABEL_5_MM},
   {ICON_E_10_MM,              LABEL_10_MM},
+  {ICON_E_100_MM,             LABEL_100_MM},
+  {ICON_E_200_MM,             LABEL_200_MM},
 };
 
-const  u8 item_len[ITEM_LEN_NUM] = {1, 5, 10};
+const  u8 item_len[ITEM_LEN_NUM] = {1, 5, 10, 100, 200};
 static u8 item_len_i = 1;
 
 static float extrudeCoordinate = 0.0f;
@@ -69,6 +56,20 @@ void menuExtrude(void)
   float eTemp  = 0.0f;
   bool  eRelative = false;
   u32   feedrate = 0;
+
+  MENUITEMS extrudeItems = {
+  // title
+  LABEL_EXTRUDE,
+  // icon                       label
+  {{ICON_UNLOAD,               LABEL_UNLOAD},
+    {ICON_BACKGROUND,           LABEL_BACKGROUND},
+    {ICON_BACKGROUND,           LABEL_BACKGROUND},
+    {ICON_LOAD,                 LABEL_LOAD},
+    {ICON_NOZZLE,               LABEL_NOZZLE},
+    {ICON_E_5_MM,               LABEL_5_MM},
+    {ICON_NORMAL_SPEED,         LABEL_NORMAL_SPEED},
+    {ICON_BACK,                 LABEL_BACK},}
+  };
 
   while(infoCmd.count != 0) {loopProcess();}
   extrudeCoordinate = eTemp = eSaved = coordinateGetAxisTarget(E_AXIS);
@@ -130,7 +131,7 @@ void menuExtrude(void)
     {
       extrudeCoordinate = eTemp;
       extrudeCoordinateReDraw(true);
-      if(item_extruder_i != heatGetCurrentToolNozzle() - NOZZLE0)
+      if(item_extruder_i != heatGetCurrentTool())
         storeCmd("%s\n", tool_change[item_extruder_i]);
       storeCmd("G0 E%.5f F%d\n", extrudeCoordinate, infoSettings.ext_speed[item_speed_i]);
     }

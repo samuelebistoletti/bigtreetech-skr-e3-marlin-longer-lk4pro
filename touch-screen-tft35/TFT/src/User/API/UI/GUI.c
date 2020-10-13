@@ -556,16 +556,22 @@ void GUI_DispString(int16_t x, int16_t y, const uint8_t *p)
   }
 }
 
-const uint8_t* GUI_DispLenString(int16_t x, int16_t y, const uint8_t *p, uint16_t pixelWidth)
+const uint8_t* GUI_DispLenString(int16_t x, int16_t y, const uint8_t *p, uint16_t pixelWidth, bool truncate)
 {
   CHAR_INFO info;
   uint16_t curPixelWidth = 0;
   if(p == NULL) return NULL;
 
+  if(truncate) pixelWidth -= BYTE_HEIGHT;
+
   while(curPixelWidth < pixelWidth && *p)
   {
     getCharacterInfo(p, &info);
-    if(curPixelWidth + info.pixelWidth > pixelWidth) return p;
+    if(curPixelWidth + info.pixelWidth > pixelWidth)
+    {
+      if(truncate) GUI_DispOne(x, y, (u8*)"…");
+      return p;
+    }
     GUI_DispOne(x, y, p);
     x += info.pixelWidth;
     curPixelWidth += info.pixelWidth;
@@ -603,7 +609,7 @@ void GUI_DispStringInRect(int16_t sx, int16_t sy, int16_t ex, int16_t ey, const 
   uint8_t i=0;
   for(i=0; i<nline; i++)
   {
-    p = GUI_DispLenString(x, y, p, width);
+    p = GUI_DispLenString(x, y, p, width, false);
     y += BYTE_HEIGHT;
   }
 }
@@ -635,6 +641,12 @@ void GUI_DispStringInRectEOL(int16_t sx, int16_t sy, int16_t ex, int16_t ey, con
     p += info.bytes;
   }
 }
+
+void GUI_DispStringInPrectEOL(const GUI_RECT *rect, const uint8_t *p)
+{
+  GUI_DispStringInRectEOL(rect->x0, rect->y0, rect->x1, rect->y1,p);
+}
+
 
 const uint32_t GUI_Pow10[10] = {
 1 , 10, 100, 1000, 10000,
@@ -831,7 +843,7 @@ void Scroll_DispString(SCROLL * para, uint8_t align)
           para->off_head = 0;
         }
 
-        GUI_DispLenString(para->rect->x0 - para->off_head, para->rect->y0, &para->text[para->curByte], para->maxPixelWidth + info.pixelWidth);
+        GUI_DispLenString(para->rect->x0 - para->off_head, para->rect->y0, &para->text[para->curByte], para->maxPixelWidth + info.pixelWidth, false);
 
         para->curPixelWidth--;
         if(para->curPixelWidth < para->maxPixelWidth)
@@ -846,7 +858,7 @@ void Scroll_DispString(SCROLL * para, uint8_t align)
       if(para->curPixelWidth + 2*BYTE_WIDTH < para->maxPixelWidth)
       {
         para->off_tail++;
-        GUI_DispLenString(para->rect->x1-para->off_tail, para->rect->y0, para->text, para->off_tail);
+        GUI_DispLenString(para->rect->x1-para->off_tail, para->rect->y0, para->text, para->off_tail, false);
         if(para->off_tail + para->rect->x0 >= para->rect->x1)
         {
           para->off_head=0;
@@ -934,14 +946,13 @@ void GUI_DrawButton(const BUTTON *button, uint8_t pressed)
 }
 
 
-void GUI_DrawWindow(const WINDOW *window, const uint8_t *title, const uint8_t *inf)
+void GUI_DrawWindow(const WINDOW *window, const uint8_t *title, const uint8_t *inf, bool actionBar)
 {
   GUI_RECT w_rect = window->rect;
 
   u16 title_height = window->titleHeight;
   //u16 action_height = window->actionBarHeight;
   u16 title_txt_y0 = w_rect.y0 + (title_height - BYTE_HEIGHT) / 2;
-
   u16 title_y1 = window->rect.y0 + window->titleHeight;
   u16 action_y0 = window->rect.y1 - window->actionBarHeight;
   u8 margin = BYTE_WIDTH/2;
@@ -954,10 +965,11 @@ void GUI_DrawWindow(const WINDOW *window, const uint8_t *title, const uint8_t *i
   GUI_SetColor(window->info.backColor);
   GUI_FillRect(w_rect.x0, title_y1, w_rect.x1, action_y0);
 
-  //draw action bar backgorund
-  GUI_SetColor(window->actionBar.backColor);
-  GUI_FillRect(w_rect.x0, action_y0, w_rect.x1, w_rect.y1);
-
+  if (actionBar)
+  { //draw action bar backgorund
+    GUI_SetColor(window->actionBar.backColor);
+    GUI_FillRect(w_rect.x0, action_y0, w_rect.x1, w_rect.y1);
+  }
   GUI_SetTextMode(GUI_TEXTMODE_TRANS);
 
   //draw window type icon
@@ -990,10 +1002,15 @@ void GUI_DrawWindow(const WINDOW *window, const uint8_t *title, const uint8_t *i
     //draw title accent line
     GUI_DrawRect(w_rect.x0, title_y1 - 1, w_rect.x1, title_y1 + 1);
 
-    //draw actionbar accent line
-    GUI_SetColor(GRAY);
-    GUI_DrawRect(w_rect.x0, action_y0 - 1, w_rect.x1, action_y0 + 1);
-
+    if (actionBar)
+    { //draw actionbar accent line
+      GUI_SetColor(GRAY);
+      GUI_DrawRect(w_rect.x0, action_y0 - 1, w_rect.x1, action_y0 + 1);
+    }
+    else
+    {
+      w_rect.y1 -= window->actionBarHeight;
+    }
     //draw window border
     GUI_SetColor(window->lineColor);
     for (u8 i = 0; i < window->lineWidth; i++)
@@ -1014,3 +1031,4 @@ void GUI_DrawWindow(const WINDOW *window, const uint8_t *title, const uint8_t *i
 
     GUI_RestoreColorDefault();
 }
+

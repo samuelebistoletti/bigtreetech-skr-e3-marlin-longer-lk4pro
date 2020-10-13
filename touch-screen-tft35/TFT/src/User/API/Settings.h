@@ -1,22 +1,50 @@
 #ifndef _SETTINGS_H_
 #define _SETTINGS_H_
 
-#include "stdint.h"
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+#include <stdint.h>
 #include "coordinate.h"
 #include "Configuration.h"
 
-#define CONFIG_SUPPPORT 20200530
+
+enum
+{
+  font_sign,
+  config_sign,
+  lang_sign,
+  icon_sign,
+  sign_count
+};
+
+// Config version support
+// change if new elements/keywords are added/removed/changed in the configuration.h Format YYYYMMDD
+// this number should match the CONFIG_VERSION in configuration.h
+#define CONFIG_SUPPPORT 20200810
+
+#define FONT_FLASH_SIGN       20200908 //(YYYYMMDD) change if fonts require updating
+#define CONFIG_FLASH_SIGN     20200908 //(YYYYMMDD) change if any keyword(s) in config.ini is added or removed
+#define LANGUAGE_FLASH_SIGN   20200908 //(YYYYMMDD) change if any keyword(s) in language pack is added or removed
+#define ICON_FLASH_SIGN       20200908 //(YYYYMMDD) change if any icon(s) is added or removed
+
+#define FONT_CHECK_SIGN       (FONT_FLASH_SIGN + WORD_UNICODE)
+#define CONFIG_CHECK_SIGN     (CONFIG_FLASH_SIGN + STRINGS_STORE_ADDR)
+#define LANGUAGE_CHECK_SIGN   (LANGUAGE_FLASH_SIGN)
+#define ICON_CHECK_SIGN       (ICON_FLASH_SIGN + ICON_ADDR(0))
 
 #define ITEM_BAUDRATE_NUM     9
 
 #define MAX_EXT_COUNT         6
-#define MAX_TOOL_COUNT        6
-#define MAX_HEATER_COUNT      (MAX_TOOL_COUNT + 1)
-#define MAX_FAN_COUNT         6
+#define MAX_HOTEND_COUNT      6
+#define MAX_HEATER_COUNT      (2 + MAX_HOTEND_COUNT) // chamber + bed + hotend
+#define MAX_FAN_CTRL_COUNT    2
+#define MAX_FAN_COUNT         (6 + MAX_FAN_CTRL_COUNT)
 
 #define AXIS_NUM              (TOTAL_AXIS - 1)
 #define SPEED_COUNT           3
-#define PREHEAT_COUNT         4
+#define PREHEAT_COUNT         6
 #define CUSTOM_GCODES_COUNT   15
 #define MAX_STRING_LENGTH     20
 #define MAX_LABEL_LENGTH      7
@@ -31,15 +59,18 @@
 #define ENABLED   1
 #define AUTO      2
 
-#define HEATER_COUNT (infoSettings.tool_count + 1)
+typedef enum
+{
+  MARLIN = 0,
+  SERIAL_TSC,
+  MODE_COUNT
+}LCD_MODE;
 
 typedef enum
 {
-  SERIAL_TSC = 0,
-  LCD12864,
-  LCD2004,
-  MODE_COUNT
-}LCD_MODE;
+  LCD2004 = 0,
+  LCD12864
+}LCD_MARLIN_MODE;
 
 typedef struct
 {
@@ -58,20 +89,25 @@ typedef struct
   uint16_t list_border_color;
   uint16_t list_button_color;
 
-  uint8_t  silent;
+  uint8_t  touchSound;
+  uint8_t  alertSound;
+  uint8_t  toastSound;
   uint8_t  auto_off;
   uint8_t  terminalACK;
   uint8_t  invert_axis[AXIS_NUM];
   uint8_t  move_speed;
   uint8_t  knob_led_color;
+  uint8_t  knob_led_idle;
   uint8_t  persistent_info;
   uint8_t  file_listmode;
+  uint8_t  ack_notification;
 
   uint8_t  lcd_brightness;
   uint8_t  lcd_idle_brightness;
   uint8_t  lcd_idle_timer;
 
   uint8_t  serial_alwaysOn;
+  uint8_t  marlin_type;
   uint16_t marlin_mode_bg_color;
   uint16_t marlin_mode_font_color;
   uint8_t  marlin_mode_showtitle;
@@ -88,6 +124,7 @@ typedef struct
   uint16_t runout_noise_ms;
   uint8_t  runout_distance;
 
+  uint8_t  powerloss_en;
   uint8_t  powerloss_home;
   uint8_t  powerloss_invert;
   uint8_t  powerloss_z_raise;
@@ -95,16 +132,19 @@ typedef struct
 
 //machine specific settings
 
-  uint8_t   tool_count;
-  uint8_t   heater_count;
+  uint8_t   hotend_count;
+  uint8_t   bed_en;
+  uint8_t   chamber_en;
   uint8_t   ext_count;
   uint8_t   fan_count;
+  uint8_t   fan_ctrl_count;
   uint8_t   auto_load_leveling;
+  uint8_t   autoLevelState;
   uint8_t   onboardSD;
   uint8_t   m27_refresh_time;
   uint8_t   m27_active;
   uint8_t   longFileName;
-  uint16_t  max_temp[MAX_HEATER_COUNT];  //Tool count + bed
+  uint16_t  max_temp[MAX_HEATER_COUNT];  // chamber + bed + hotend
   uint16_t  min_ext_temp;
   uint8_t   fan_max[MAX_FAN_COUNT];
   uint8_t   fan_percentage;
@@ -146,6 +186,17 @@ char     end_gcode[MAX_GCODE_LENGTH+1];
 char     cancel_gcode[MAX_GCODE_LENGTH+1];
 }PRINT_GCODES;
 
+/**
+ * Bed Leveling type
+ */
+typedef enum
+{
+  BL_UNKNOWN = 0,                     // Unknown BL
+  BL_ABL,                             // Generic Auto Bed Leveling (ABL)
+  BL_BBL,                             // Bilinear Bed Leveling (BBL)
+  BL_UBL,                             // Unified Bed Leveling (UBL)
+  BL_MBL,                             // Mesh Bed Leveling (MBL)
+}BL_TYPE;
 
 typedef struct
 {
@@ -153,6 +204,7 @@ typedef struct
   uint8_t EEPROM;
   uint8_t autoReportTemp;
   uint8_t autoLevel;
+  uint8_t blType;
   uint8_t zProbe;
   uint8_t levelingData;
   uint8_t softwarePower;
@@ -173,9 +225,11 @@ extern MACHINESETTINGS infoMachineSettings;
 void initMachineSetting(void);
 void infoSettingsReset(void);
 void setupMachine(void);
+float flashUsedPercentage(void);
+void checkflashSign(void);
 
-
-
-
+#ifdef __cplusplus
+}
+#endif
 
 #endif

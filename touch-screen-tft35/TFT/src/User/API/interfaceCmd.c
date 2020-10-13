@@ -2,8 +2,8 @@
 #include "includes.h"
 
 
-QUEUE infoCmd;       //
-QUEUE infoCacheCmd;  // Only when heatHasWaiting() is false the cmd in this cache will move to infoCmd queue.
+GCODE_QUEUE infoCmd;       //
+GCODE_QUEUE infoCacheCmd;  // Only when heatHasWaiting() is false the cmd in this cache will move to infoCmd queue.
 
 static u8 cmd_index=0;
 
@@ -35,10 +35,22 @@ static float cmd_float(void)
   return (strtod(&infoCmd.queue[infoCmd.index_r].gcode[cmd_index], NULL));
 }
 
+#if defined(SERIAL_PORT_2) || defined(BUZZER_PIN)
 //check if 'string' start with 'search'
 bool static startsWith(TCHAR *search, TCHAR *string)
 {
   return (strstr(string, search) - string == cmd_index) ? true : false;
+}
+#endif
+
+// Common store cmd
+void commonStoreCmd(GCODE_QUEUE *pQueue, const char* format, va_list va)
+{
+  vsnprintf(pQueue->queue[pQueue->index_w].gcode, CMD_MAX_CHAR, format, va);
+
+  pQueue->queue[pQueue->index_w].src = SERIAL_PORT;
+  pQueue->index_w = (pQueue->index_w + 1) % CMD_MAX_LIST;
+  pQueue->count++;
 }
 
 // Store gcode cmd to infoCmd queue, this cmd will be sent by UART in sendQueueCmd(),
@@ -47,7 +59,7 @@ bool storeCmd(const char * format,...)
 {
   if (strlen(format) == 0) return false;
 
-  QUEUE *pQueue = &infoCmd;
+  GCODE_QUEUE *pQueue = &infoCmd;
 
   if (pQueue->count >= CMD_MAX_LIST)
   {
@@ -55,14 +67,10 @@ bool storeCmd(const char * format,...)
     return false;
   }
 
-  my_va_list ap;
-  my_va_start(ap,format);
-  my_vsprintf(pQueue->queue[pQueue->index_w].gcode, format, ap);
-  my_va_end(ap);
-  pQueue->queue[pQueue->index_w].src = SERIAL_PORT;
-
-  pQueue->index_w = (pQueue->index_w + 1) % CMD_MAX_LIST;
-  pQueue->count++;
+  va_list va;
+  va_start(va, format);
+  commonStoreCmd(pQueue, format, va);
+  va_end(va);
 
   return true;
 }
@@ -73,7 +81,7 @@ void mustStoreCmd(const char * format,...)
 {
   if (strlen(format) == 0) return;
 
-  QUEUE *pQueue = &infoCmd;
+  GCODE_QUEUE *pQueue = &infoCmd;
 
   if(pQueue->count >= CMD_MAX_LIST) reminderMessage(LABEL_BUSY, STATUS_BUSY);
 
@@ -82,14 +90,38 @@ void mustStoreCmd(const char * format,...)
     loopProcess();
   }
 
-  my_va_list ap;
-  my_va_start(ap,format);
-  my_vsprintf(pQueue->queue[pQueue->index_w].gcode, format, ap);
-  my_va_end(ap);
-  pQueue->queue[pQueue->index_w].src = SERIAL_PORT;
+  va_list va;
+  va_start(va, format);
+  commonStoreCmd(pQueue, format, va);
+  va_end(va);
+}
 
-  pQueue->index_w = (pQueue->index_w + 1) % CMD_MAX_LIST;
-  pQueue->count++;
+// Store Script cmd to infoCmd queue
+// For example: "M502\nM500\n" will be split into two commands "M502\n", "M500\n"
+void mustStoreScript(const char * format,...)
+{
+  if (strlen(format) == 0) return;
+
+  char script[256];
+  va_list va;
+  va_start(va, format);
+  vsnprintf(script, 256, format, va);
+  va_end(va);
+
+  char *p = script;
+  uint16_t i = 0;
+  char cmd[CMD_MAX_CHAR];
+  for (;;) {
+    char c = *p++;
+    if (!c) return;
+    cmd[i++] = c;
+
+    if (c == '\n') {
+      cmd[i] = 0;
+      mustStoreCmd("%s", cmd);
+      i = 0;
+    }
+  }
 }
 
 // Store from UART cmd(such as: ESP3D, OctoPrint, else TouchScreen) to infoCmd queue, this cmd will be sent by UART in sendQueueCmd(),
@@ -97,7 +129,7 @@ void mustStoreCmd(const char * format,...)
 bool storeCmdFromUART(uint8_t port, const char * gcode)
 {
   if (strlen(gcode) == 0) return false;
-  QUEUE *pQueue = &infoCmd;
+  GCODE_QUEUE *pQueue = &infoCmd;
 
   if (pQueue->count >= CMD_MAX_LIST)
   {
@@ -105,7 +137,7 @@ bool storeCmdFromUART(uint8_t port, const char * gcode)
     return false;
   }
 
-  strcpy(pQueue->queue[pQueue->index_w].gcode, gcode);
+  strncpy(pQueue->queue[pQueue->index_w].gcode, gcode, CMD_MAX_CHAR);
 
   pQueue->queue[pQueue->index_w].src = port;
   pQueue->index_w = (pQueue->index_w + 1) % CMD_MAX_LIST;
@@ -118,7 +150,7 @@ bool storeCmdFromUART(uint8_t port, const char * gcode)
 // this function is only for restore printing status after power failed.
 void mustStoreCacheCmd(const char * format,...)
 {
-  QUEUE *pQueue = &infoCacheCmd;
+  GCODE_QUEUE *pQueue = &infoCacheCmd;
 
   if(pQueue->count == CMD_MAX_LIST) reminderMessage(LABEL_BUSY, STATUS_BUSY);
 
@@ -127,13 +159,10 @@ void mustStoreCacheCmd(const char * format,...)
     loopProcess();
   }
 
-  my_va_list ap;
-  my_va_start(ap,format);
-  my_vsprintf(pQueue->queue[pQueue->index_w].gcode, format, ap);
-  my_va_end(ap);
-
-  pQueue->index_w = (pQueue->index_w + 1) % CMD_MAX_LIST;
-  pQueue->count++;
+  va_list va;
+  va_start(va, format);
+  commonStoreCmd(pQueue, format, va);
+  va_end(va);
 }
 
 // Move gcode cmd from infoCacheCmd to infoCmd queue.
@@ -272,7 +301,7 @@ void sendQueueCmd(void)
               if (mountFS() && (f_open(&tmp, infoFile.title, FA_OPEN_EXISTING | FA_READ) == FR_OK) )
               {
                 char buf[10];
-                my_sprintf(buf, "%d", f_size(&tmp));
+                sprintf(buf, "%d", f_size(&tmp));
                 Serial_Puts(SERIAL_PORT_2, "File opened: ");
                 Serial_Puts(SERIAL_PORT_2, infoFile.title);
                 Serial_Puts(SERIAL_PORT_2, " Size: ");
@@ -337,7 +366,7 @@ void sendQueueCmd(void)
                 Serial_Puts(SERIAL_PORT_2, ".\n");
               }
                 char buf[55];
-                my_sprintf(buf, "%s printing byte %d/%d\n",(infoFile.source==TFT_SD)?"TFT SD":"TFT USB", getPrintCur(),getPrintSize());
+                sprintf(buf, "%s printing byte %d/%d\n",(infoFile.source==TFT_SD)?"TFT SD":"TFT USB", getPrintCur(),getPrintSize());
                 Serial_Puts(SERIAL_PORT_2, buf);
                 Serial_Puts(SERIAL_PORT_2, "ok\n");
                 purgeLastCmd();
@@ -405,11 +434,13 @@ void sendQueueCmd(void)
             {
               char buf[50];
               Serial_Puts(SERIAL_PORT_2, "FIRMWARE_NAME: " FIRMWARE_NAME " SOURCE_CODE_URL:https://github.com/bigtreetech/BIGTREETECH-TouchScreenFirmware\n");
-              my_sprintf(buf, "Cap:TOOL_NUM:%d\n", infoSettings.tool_count);
+              sprintf(buf, "Cap:HOTEND_NUM:%d\n", infoSettings.hotend_count);
               Serial_Puts(SERIAL_PORT_2, buf);
-              my_sprintf(buf, "Cap:EXTRUDER_NUM:%d\n", infoSettings.ext_count);
+              sprintf(buf, "Cap:EXTRUDER_NUM:%d\n", infoSettings.ext_count);
               Serial_Puts(SERIAL_PORT_2, buf);
-              my_sprintf(buf, "Cap:FAN_NUM:%d\n", infoSettings.fan_count);
+              sprintf(buf, "Cap:FAN_NUM:%d\n", infoSettings.fan_count);
+              Serial_Puts(SERIAL_PORT_2, buf);
+              sprintf(buf, "Cap:FAN_CTRL_NUM:%d\n", infoSettings.fan_ctrl_count);
               Serial_Puts(SERIAL_PORT_2, buf);
               Serial_Puts(SERIAL_PORT_2, "ok\n");
               purgeLastCmd();
@@ -469,23 +500,39 @@ void sendQueueCmd(void)
 
         case 106: //M106
         {
-          if(!fromTFT) {
-            u8 i = 0;
-            if(cmd_seen('P')) i = cmd_value();
-            if(cmd_seen('S'))
-            {
-              fanSetSpeed(i, cmd_value());
-            }
+          uint8_t i = cmd_seen('P') ? cmd_value() : 0;
+          if(cmd_seen('S') && fanIsType(i, FAN_TYPE_F) ) {
+            fanSetSpeed(i, cmd_value());
+            fanSetSendWaiting(i, false);
+          }
+          else if (!cmd_seen('\n'))
+          {
+            char buf[12];
+            sprintf(buf, "S%u\n", fanGetSpeed(i));
+            strcat(infoCmd.queue[infoCmd.index_r].gcode,(const char*)buf);
           }
           break;
         }
 
         case 107: //M107
         {
-          if(!fromTFT) {
-            u8 i = 0;
-            if(cmd_seen('P')) i = cmd_value();
-            fanSetSpeed(i, 0);
+          uint8_t i = cmd_seen('P') ? cmd_value() : 0;
+          if (fanIsType(i, FAN_TYPE_F)) fanSetSpeed(i, 0);
+          break;
+        }
+        
+        case 710: //M710 Controller Fan
+        {
+          u8 i = 0;
+          if(cmd_seen('S')) { 
+            i = fanGetTypID(i,FAN_TYPE_CTRL_S); 
+            fanSetSpeed(i, cmd_value());
+            fanSetSendWaiting(i, false);
+          }
+          if(cmd_seen('I')) { 
+            i = fanGetTypID(i=0,FAN_TYPE_CTRL_I); 
+            fanSetSpeed(i, cmd_value());
+            fanSetSendWaiting(i, false);
           }
           break;
         }
@@ -493,9 +540,8 @@ void sendQueueCmd(void)
         case 109: //M109
           if (fromTFT)
           {
-            TOOL i = heatGetCurrentToolNozzle();
-            if(cmd_seen('T')) i = (TOOL)(cmd_value() + NOZZLE0);
-            infoCmd.queue[infoCmd.index_r].gcode[3]='4';  // Avoid send M109 to Marlin
+            infoCmd.queue[infoCmd.index_r].gcode[cmd_index + 3]='4';  // Avoid send M109 to Marlin
+            uint8_t i = cmd_seen('T') ? cmd_value() : heatGetCurrentHotend();
             if (cmd_seen('R'))
             {
               infoCmd.queue[infoCmd.index_r].gcode[cmd_index-1] = 'S';
@@ -510,8 +556,7 @@ void sendQueueCmd(void)
         case 104: //M104
           if (fromTFT)
           {
-            TOOL i = heatGetCurrentToolNozzle();
-            if(cmd_seen('T')) i = (TOOL)(cmd_value() + NOZZLE0);
+            uint8_t i = cmd_seen('T') ? cmd_value() : heatGetCurrentHotend();
             if(cmd_seen('S'))
             {
               heatSyncTargetTemp(i, cmd_value());
@@ -549,7 +594,7 @@ void sendQueueCmd(void)
             statusScreen_setMsg((u8 *)"M117", (u8 *)&message);
             if (infoMenu.menu[infoMenu.cur] != menuStatus)
             {
-              popupReminder(DIALOG_TYPE_INFO, (u8 *)"M117", (u8 *)&message);
+              addToast(DIALOG_TYPE_INFO, message);
             }
           }
           break;
@@ -557,7 +602,7 @@ void sendQueueCmd(void)
         case 190: //M190
           if (fromTFT)
           {
-            infoCmd.queue[infoCmd.index_r].gcode[2]='4';   // Avoid send M190 to Marlin
+            infoCmd.queue[infoCmd.index_r].gcode[cmd_index + 2]='4';   // Avoid send M190 to Marlin
             if (cmd_seen('R'))
             {
               infoCmd.queue[infoCmd.index_r].gcode[cmd_index-1] = 'S';
@@ -585,6 +630,38 @@ void sendQueueCmd(void)
             }
           }
           break;
+
+        case 191: //M191
+          if (fromTFT)
+          {
+            infoCmd.queue[infoCmd.index_r].gcode[cmd_index + 2]='4';   // Avoid send M191 to Marlin
+            if (cmd_seen('R'))
+            {
+              infoCmd.queue[infoCmd.index_r].gcode[cmd_index-1] = 'S';
+              heatSetIsWaiting(CHAMBER, WAIT_COOLING_HEATING);
+            }
+            else
+            {
+              heatSetIsWaiting(CHAMBER, WAIT_HEATING);
+            }
+          }
+        // No break here, The data processing of M191 is the same as that of M141 below
+        case 141: //M141
+          if (fromTFT)
+          {
+            if (cmd_seen('S'))
+            {
+              heatSyncTargetTemp(CHAMBER, cmd_value());
+            }
+            else if (!cmd_seen('\n'))
+            {
+              char buf[12];
+              sprintf(buf, "S%u\n", heatGetTargetTemp(CHAMBER));
+              strcat(infoCmd.queue[infoCmd.index_r].gcode, (const char *)buf);
+              heatSetSendWaiting(CHAMBER, false);
+            }
+          }
+          break;
         case 201: //M201 Maximum Acceleration (units/s2)
           if(cmd_seen('X')) setParameter(P_MAX_ACCELERATION, X_AXIS, cmd_float());
           if(cmd_seen('Y')) setParameter(P_MAX_ACCELERATION, Y_AXIS, cmd_float());
@@ -598,28 +675,34 @@ void sendQueueCmd(void)
           if(cmd_seen('E')) setParameter(P_MAX_FEED_RATE, E_AXIS, cmd_float());
           break;
         case 204: //M204 Acceleration (units/s2)
-          if(cmd_seen('P')) setParameter(P_ACCELERATION,0,cmd_float());
-          if(cmd_seen('R')) setParameter(P_ACCELERATION,1,cmd_float());
-          if(cmd_seen('T')) setParameter(P_ACCELERATION,2,cmd_float());
+          if(cmd_seen('P')) setParameter(P_ACCELERATION, 0, cmd_float());
+          if(cmd_seen('R')) setParameter(P_ACCELERATION, 1, cmd_float());
+          if(cmd_seen('T')) setParameter(P_ACCELERATION, 2, cmd_float());
+          break;
+        case 205: //M205 - Set Advanced Settings
+          if(cmd_seen('X')) setParameter(P_JERK, X_AXIS, cmd_float());
+          if(cmd_seen('Y')) setParameter(P_JERK, Y_AXIS, cmd_float());
+          if(cmd_seen('Z')) setParameter(P_JERK, Z_AXIS, cmd_float());
+          if(cmd_seen('E')) setParameter(P_JERK, E_AXIS, cmd_float());
           break;
         case 207: //M207 FW Retract
-          if(cmd_seen('F')) setParameter(P_FWRETRACT,0,cmd_float());
-          if(cmd_seen('S')) setParameter(P_FWRETRACT,1,cmd_float());
-          if(cmd_seen('W')) setParameter(P_FWRETRACT,2,cmd_float());
-          if(cmd_seen('Z')) setParameter(P_FWRETRACT,3,cmd_float());
+          if(cmd_seen('S')) setParameter(P_FWRETRACT, 0, cmd_float());
+          if(cmd_seen('W')) setParameter(P_FWRETRACT, 1, cmd_float());
+          if(cmd_seen('F')) setParameter(P_FWRETRACT, 2, cmd_float());
+          if(cmd_seen('Z')) setParameter(P_FWRETRACT, 3, cmd_float());
           break;
         case 208: //M208 FW Retract recover
-          if(cmd_seen('F')) setParameter(P_FWRECOVER,0,cmd_float());
-          if(cmd_seen('R')) setParameter(P_FWRECOVER,1,cmd_float());
-          if(cmd_seen('S')) setParameter(P_FWRECOVER,2,cmd_float());
-          if(cmd_seen('W')) setParameter(P_FWRECOVER,3,cmd_float());
+          if(cmd_seen('S')) setParameter(P_FWRECOVER, 0, cmd_float());
+          if(cmd_seen('W')) setParameter(P_FWRECOVER, 1, cmd_float());
+          if(cmd_seen('F')) setParameter(P_FWRECOVER, 2, cmd_float());
+          if(cmd_seen('R')) setParameter(P_FWRECOVER, 3, cmd_float());
           break;
         case 220: //M220
-          if(!fromTFT && cmd_seen('S'))
+          if(cmd_seen('S'))
             speedSetPercent(0,cmd_value());
           break;
         case 221: //M221
-          if(!fromTFT && cmd_seen('S'))
+          if(cmd_seen('S'))
             speedSetPercent(1,cmd_value());
           break;
 
@@ -641,12 +724,24 @@ void sendQueueCmd(void)
             }
             break;
         #endif
-        #ifdef NOZZLE_PAUSE_M601
-          case 601: //M601 pause print
+
+        case 420: //M420
+          if(cmd_seen('S')) {
+            infoSettings.autoLevelState = cmd_value();
+            setParameter(P_ABL_STATE,0,cmd_value());
+            if(cmd_value()==0) storeCmd("M117 ABL inactive\n");
+            else storeCmd("M117 ABL active\n");
+          }
+          if(cmd_seen('Z')) setParameter(P_ABL_STATE,1,cmd_float());
+        break;
+
+        #ifdef NOZZLE_PAUSE_M600_M601
+          case 600: //M600/M601 pause print
+          case 601:
             if (isPrinting())
             {
               setPrintPause(true, false);
-              // prevent sending M601 to marlin
+              // prevent sending M600/M601 to marlin
               purgeLastCmd();
               return;
             }
@@ -680,17 +775,23 @@ void sendQueueCmd(void)
             if(cmd_seen('E')) setParameter(P_CURRENT,E2_STEPPER,cmd_value());
             setDualStepperStatus(E_STEPPER,true);
           }
+          break;
         case 914: //parse and store TMC Bump sensitivity values
           if(cmd_seen('X')) setParameter(P_BUMPSENSITIVITY, X_STEPPER, cmd_float());
           if(cmd_seen('Y')) setParameter(P_BUMPSENSITIVITY, Y_STEPPER, cmd_float());
           if(cmd_seen('Z')) setParameter(P_BUMPSENSITIVITY, Z_STEPPER, cmd_float());
           break;
+        case 913: //M913 Hybrid Threshold Speed
+          if(cmd_seen('X')) setParameter(P_HYBRID_THRESHOLD, X_STEPPER, cmd_value());
+          if(cmd_seen('Y')) setParameter(P_HYBRID_THRESHOLD, Y_STEPPER, cmd_value());
+          if(cmd_seen('Z')) setParameter(P_HYBRID_THRESHOLD, Z_STEPPER, cmd_value());
+          if(cmd_seen('E')) setParameter(P_HYBRID_THRESHOLD, E_STEPPER, cmd_value());
+          break;  
       }
       break; //end parsing M-codes
 
     case 'G':
-
-      cmd=strtol(&infoCmd.queue[infoCmd.index_r].gcode[1],NULL,10);
+      cmd=strtol(&infoCmd.queue[infoCmd.index_r].gcode[cmd_index + 1],NULL,10);
       switch(cmd)
       {
         case 0: //G0
@@ -713,7 +814,26 @@ void sendQueueCmd(void)
 
         case 28: //G28
           coordinateSetKnown(true);
-          babyStepReset();
+          babyReset();
+          storeCmd("M503 S0\n");
+          break;
+
+        case 29: //G29
+          if(ENABLE_BL_VALUE > 0)                          // if not Disabled
+          {
+            if(cmd_seen('A'))
+            {
+              infoSettings.autoLevelState = 1;
+              setParameter(P_ABL_STATE,0,1);
+              storeCmd("M117 UBL active\n");
+            }
+            if(cmd_seen('D'))
+            {
+              infoSettings.autoLevelState = 0;
+              setParameter(P_ABL_STATE,0,0);
+              storeCmd("M117 UBL inactive\n");
+            }
+          }
           break;
 
         case 90: //G90
@@ -748,8 +868,8 @@ void sendQueueCmd(void)
       break; //end parsing G-codes
 
     case 'T':
-      cmd=strtol(&infoCmd.queue[infoCmd.index_r].gcode[1], NULL, 10);
-      heatSetCurrentToolNozzle((TOOL)(cmd + NOZZLE0));
+      cmd=strtol(&infoCmd.queue[infoCmd.index_r].gcode[cmd_index + 1], NULL, 10);
+      heatSetCurrentTool(cmd);
       break;
 
   } // end parsing cmd
